@@ -1,32 +1,84 @@
 import os
+import shutil
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
+from langchain_huggingface import HuggingFaceEmbeddings
 
-print("Loading documents...")
+# -------------------------------------------------
+# CONFIG
+# -------------------------------------------------
+DATA_PATH = "data/documents"
+VECTOR_PATH = "models/vector_db"
+EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
+print("\n📄 Loading documents...\n")
+
+# -------------------------------------------------
+# CHECK FOLDER EXISTS
+# -------------------------------------------------
+if not os.path.exists(DATA_PATH):
+    raise FileNotFoundError(f"Folder not found: {DATA_PATH}")
 
 documents = []
-for file in os.listdir("data/documents"):
+
+# -------------------------------------------------
+# LOAD PDFs WITH METADATA
+# -------------------------------------------------
+for file in os.listdir(DATA_PATH):
     if file.endswith(".pdf"):
-        loader = PyPDFLoader(os.path.join("data/documents", file))
-        documents.extend(loader.load())
+        file_path = os.path.join(DATA_PATH, file)
 
-print(f"Loaded {len(documents)} pages")
+        print(f"🔹 Reading: {file}")
 
+        loader = PyPDFLoader(file_path)
+        pages = loader.load()
+
+        # Add source metadata
+        for page in pages:
+            page.metadata["source"] = file
+
+        documents.extend(pages)
+
+if not documents:
+    raise ValueError("❌ No PDF files found in data/documents")
+
+print(f"\n✅ Loaded {len(documents)} pages")
+
+# -------------------------------------------------
+# SPLIT INTO CHUNKS
+# -------------------------------------------------
 text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=500,
-    chunk_overlap=50
+    chunk_size=800,
+    chunk_overlap=100
 )
 
 chunks = text_splitter.split_documents(documents)
-print(f"Created {len(chunks)} chunks")
+
+print(f"✂️ Created {len(chunks)} chunks")
+
+# -------------------------------------------------
+# EMBEDDINGS
+# -------------------------------------------------
+print("\n🧠 Generating embeddings...\n")
 
 embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
+    model_name=EMBED_MODEL
 )
 
-vector_db = FAISS.from_documents(chunks, embeddings)
-vector_db.save_local("models/vector_db")
+# -------------------------------------------------
+# DELETE OLD VECTOR DB (OPTIONAL RESET)
+# -------------------------------------------------
+if os.path.exists(VECTOR_PATH):
+    print("♻️ Removing old vector database...")
+    shutil.rmtree(VECTOR_PATH)
 
-print("✅ Vector database created successfully!")
+# -------------------------------------------------
+# CREATE FAISS VECTOR STORE
+# -------------------------------------------------
+vector_db = FAISS.from_documents(chunks, embeddings)
+
+vector_db.save_local(VECTOR_PATH)
+
+print("\n✅ Vector database created successfully!")
+print(f"📦 Saved at: {VECTOR_PATH}")

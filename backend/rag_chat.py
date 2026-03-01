@@ -1,110 +1,156 @@
+"""
+Farmer Advisory RAG System
+LLM: Qwen2.5-3B-Instruct (Balanced Detailed Mode)
+"""
+
 import torch
-from transformers import pipeline
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 
+# -------------------------------------------------
+# OPTIONAL TRANSLATION
+# -------------------------------------------------
+try:
+    from backend.translator import translate_to_english, translate_from_english
+except Exception:
+    def translate_to_english(x, l): return x
+    def translate_from_english(x, l): return x
 
-# -------------------------------
-# DEVICE CONFIGURATION (CPU / GPU)
-# -------------------------------
-DEVICE = 0 if torch.cuda.is_available() else -1
-print("Using GPU" if DEVICE == 0 else "Using CPU")
+# -------------------------------------------------
+# DEVICE CONFIG
+# -------------------------------------------------
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"✅ Using device: {DEVICE}")
 
-# -------------------------------
-# LOAD EMBEDDINGS MODEL
-# -------------------------------
+# -------------------------------------------------
+# EMBEDDINGS
+# -------------------------------------------------
 embeddings = HuggingFaceEmbeddings(
     model_name="sentence-transformers/all-MiniLM-L6-v2"
 )
 
-# -------------------------------
-# LOAD VECTOR DATABASE
-# -------------------------------
+# -------------------------------------------------
+# VECTOR DATABASE
+# -------------------------------------------------
 db = FAISS.load_local(
     "models/vector_db",
     embeddings,
     allow_dangerous_deserialization=True
 )
 
-retriever = db.as_retriever(search_kwargs={"k": 3})
+# 🔥 Increase retrieval for richer context
+retriever = db.as_retriever(search_kwargs={"k": 4})
 
-# -------------------------------
-# LOAD LLM (GPU AWARE)
-# -------------------------------
-llm = pipeline(
-    "text-generation",
-    model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-    device=DEVICE
+# -------------------------------------------------
+# LOAD MODEL
+# -------------------------------------------------
+MODEL_ID = "Qwen/Qwen2.5-3B-Instruct"
+
+print("⏳ Loading LLM...")
+
+tokenizer = AutoTokenizer.from_pretrained(
+    MODEL_ID,
+    trust_remote_code=True
 )
 
-# -------------------------------
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_ID,
+    device_map="auto",
+    torch_dtype=torch.float16 if DEVICE == "cuda" else torch.float32,
+    low_cpu_mem_usage=True
+)
+
+model.eval()
+
+llm = pipeline(
+    "text-generation",
+    model=model,
+    tokenizer=tokenizer,
+    max_new_tokens=650,           # 🔥 increased for detailed output
+    temperature=0.4,              # balanced creativity
+    top_p=0.9,
+    repetition_penalty=1.1,
+    do_sample=True,
+    pad_token_id=tokenizer.eos_token_id
+)
+
+print("✅ Model Ready")
+
+# -------------------------------------------------
 # CORE RAG FUNCTION
-# -------------------------------
+# -------------------------------------------------
 def ask_question(query: str, language: str = "English") -> str:
-    """
-    Takes a farmer query and returns a clean,
-    document-grounded agricultural advisory answer.
-    Language parameter is kept for multilingual support.
-    """
 
-    # (For now, we process in English directly)
-    query_en = query
+    query_en = translate_to_english(query, language)
 
-    # Retrieve relevant documents
     docs = retriever.invoke(query_en)
 
     if not docs:
-        return "Information not available in the knowledge base."
+        return translate_from_english(
+            "Information not available in the knowledge base.",
+            language
+        )
 
-    # Build context
-    context = "\n".join([doc.page_content for doc in docs])
+    # 🔥 Allow larger context (but safe)
+    context = "\n\n".join(d.page_content[:1000] for d in docs)
 
     prompt = f"""
-You are an agricultural advisory assistant for small farmers.
+You are a senior agricultural extension officer.
 
-Give a clear, step-by-step answer using ONLY the context.
-Use simple language.
-Format the answer as bullet points or numbered steps.
-Include:
-1. Fertilizer name
-2. Quantity
-3. Time of application (days after sowing)
-4. Any important precautions
+Use ONLY the provided context.
+Provide detailed, step-by-step instructions for farmers.
+Each step must include:
+- Quantity (if available)
+- Timing
+- Application method
+- Field condition guidance
 
-Do NOT repeat the question or context.
+STRICT FORMAT:
+
+CROP:
+STEP 1: (Detailed explanation)
+STEP 2: (Detailed explanation)
+STEP 3: (Detailed explanation)
+STEP 4:
+STEP 5:
+PRECAUTIONS: (Minimum 4 detailed precaution points)
 
 Context:
 {context}
 
+Question:
+{query_en}
+
 Answer:
 """
 
+    with torch.no_grad():
+        result = llm(prompt)[0]["generated_text"]
 
-    response = llm(
-        prompt,
-        max_new_tokens=120,
-        do_sample=True,
-        temperature=0.3
-    )
+    answer = result.split("Answer:")[-1].strip()
 
-    answer = response[0]["generated_text"]
-    answer = answer.split("Answer:")[-1].strip()
+    # Better validation
+    if answer.count("STEP") < 3 or len(answer) < 150:
+        return translate_from_english(
+            "⚠️ The system could not generate a sufficiently detailed advisory.",
+            language
+        )
 
-    return answer
-
+    return translate_from_english(answer, language)
 
 
-# -------------------------------
-# TERMINAL TEST MODE
-# -------------------------------
+# -------------------------------------------------
+# CLI MODE
+# -------------------------------------------------
 if __name__ == "__main__":
-    print("\n🌾 Farmer Advisory RAG Chatbot (CLI Mode)")
-    print("Type 'exit' to stop.\n")
+    print("\n🌾 Farmer Advisory RAG Chatbot")
+    print("Type 'exit' to stop\n")
 
     while True:
-        user_query = input("Farmer: ")
-        if user_query.lower() == "exit":
+        q = input("Farmer: ")
+        if q.lower() == "exit":
             break
-
-        reply = ask_question(user_query)
-        print("AI:", reply, "\n")
+        print("\nAI Advisory:\n")
+        print(ask_question(q))
+        print("\n" + "-" * 60)

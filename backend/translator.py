@@ -1,35 +1,26 @@
-from transformers import pipeline
+from deep_translator import GoogleTranslator
 
-translator_to_en = pipeline(
-    "translation",
-    model="ai4bharat/indictrans2-indic-en"
-)
-
-translator_from_en = pipeline(
-    "translation",
-    model="ai4bharat/indictrans2-en-indic"
-)
-
-LANG_MAP = {
-    "English": "eng_Latn",
-    "Tamil": "tam_Taml",
-    "Hindi": "hin_Deva"
-}
-
-def to_english(text, lang):
-    if lang == "English":
+def translate_to_english(text: str, language: str) -> str:
+    if language == "English":
         return text
-    return translator_to_en(
-        text,
-        src_lang=LANG_MAP[lang],
-        tgt_lang="eng_Latn"
-    )[0]["translation_text"]
-
-def from_english(text, lang):
-    if lang == "English":
+    try:
+        return GoogleTranslator(source="auto", target="en").translate(text)
+    except Exception:
         return text
-    return translator_from_en(
-        text,
-        src_lang="eng_Latn",
-        tgt_lang=LANG_MAP[lang]
-    )[0]["translation_text"]
+
+def translate_from_english(text: str, language: str) -> str:
+    if language == "English":
+        return text
+
+    target_map = {
+        "Tamil": "ta",
+        "Hindi": "hi"
+    }
+
+    try:
+        return GoogleTranslator(
+            source="en",
+            target=target_map[language]
+        ).translate(text)
+    except Exception:
+        return text
