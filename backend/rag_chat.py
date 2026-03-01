@@ -95,6 +95,7 @@ def ask_question(query: str, language: str = "English") -> str:
     # 🔥 Allow larger context (but safe)
     context = "\n\n".join(d.page_content[:1000] for d in docs)
 
+    # ---- CLEAN, STRONG PROMPT ----
     prompt = f"""
 You are a senior agricultural extension officer.
 
@@ -116,7 +117,7 @@ STEP 4:
 STEP 5:
 PRECAUTIONS: (Minimum 4 detailed precaution points)
 
-Context:
+CONTEXT:
 {context}
 
 Question:
